@@ -31,6 +31,7 @@ This repo contains the submissions to the https://codegolf.stackexchange.com/que
 - [ ] Choose one submission as reference and compare the output of
       all other submissions to that to make sure their output is actually valid. 
       May require small adjustments to capitalization of Fizz and Buzz
+- [ ] Separate graph per programming language - a graph with all of them is too crowded
 
 # Requirements
 A fairly modern Java version, clang, g++, gcc, Ruby, Rust, Julia, Python3, pypy3, and maybe some other toolchains I forgot
