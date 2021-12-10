@@ -1,0 +1,8 @@
+podman run -it --rm --volume $PWD:/root mcr.microsoft.com/powershell /usr/bin/pwsh /root/fizz.ps1
+
+Errors out
+
+Line |
+   7 |      Select-Object -Last 1) - eq 0) -or ((($i -split "" |
+     |                              ~
+     | You must provide a value expression following the '-' operator.
