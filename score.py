@@ -9,6 +9,7 @@ import time
 import json
 import signal
 import os
+from collections import defaultdict
 
 
 script_dir = Path(__file__).parent
@@ -19,7 +20,7 @@ def read_from_pipe(proc, event, append_data):
         append_data(proc.stderr.read(1))
 
 
-def test_submission(submission: Path, results):
+def test_submission(submission: Path):
     print(f"Testing {submission.name}")
     with subprocess.Popen(
         ["make", "run"], cwd=submission, stderr=subprocess.PIPE, universal_newlines=True, preexec_fn=os.setsid
@@ -41,14 +42,17 @@ def test_submission(submission: Path, results):
         event.set()
         os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
 
-        results[submission.name] = data
+        return data
 
 
 def main():
-    results = {}
-    for submission in (script_dir / "submissions").glob("*"):
-        if submission.is_dir() and all(child.name != "TBD" for child in submission.iterdir()):
-            test_submission(submission, results)
+    results = defaultdict(dict)
+    for lang in (script_dir / "submissions").glob("*"):
+        for submission in lang.glob("*"):
+            print(submission.iterdir())
+            if submission.is_dir() and not any(child.name == "TBD" for child in submission.iterdir()):
+                print("Testing {lang.name} {submission.name}")
+                results[lang.name][submission.name] = test_submission(submission)
 
     with open("results.json", "w") as f:
         json.dump(results, f)
