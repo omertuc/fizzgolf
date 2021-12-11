@@ -51,6 +51,25 @@ def main():
         plt.savefig(output_dir / f"{language}.png")
         plt.clf()
 
+    for language, submissions in results.items():
+        parsed_results = {
+            k: [
+                parse_line(line) for line in v.splitlines()
+            ] for k, v in submissions.items()
+        }
+
+        table = [ 
+        "| Author   | Throughput     |",
+        "| -------- | -------------- |"
+        ]
+        row_template = "| {}    | {:.1f} GiB/s      |"
+        for submission, values in parsed_results.items():
+            table.append(row_template.format(submission, np.mean(values)))
+
+        print(f"# Results for {language}:")
+        print("\n".join(table))
+
+
 
 if __name__ == "__main__":
     main()
