@@ -39,7 +39,7 @@ def test_submission(submission: Path):
         thread.start()
 
         # Wait a while then terminate
-        time.sleep(30)
+        time.sleep(60)
         event.set()
         os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
 
