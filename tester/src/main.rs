@@ -27,7 +27,7 @@ fn seek_to_fizz_start<T: Read>(reader: &mut T) -> Result<(), std::io::Error> {
 }
 
 const GIB: f64 = 1024.0 * 1024.0 * 1024.0;
-const BUFFER_SIZE: usize = 1024 * 1024;
+const BUFFER_SIZE: usize = 64 * 1024;
 
 fn main() {
     let submissions = Args::parse().submissions;
