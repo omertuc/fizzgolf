@@ -3,5 +3,5 @@ fizz: fizz.c
 
 .PHONY: run
 run: fizz
-	./fizz | pv > /dev/null
+	./fizz | pv --force > /dev/null
 
