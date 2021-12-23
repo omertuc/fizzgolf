@@ -35,15 +35,11 @@ impl FromStr for Submission {
     }
 }
 
-/// Simple program to greet a person
 #[derive(Parser, Debug)]
 #[clap(about, version, author)]
 struct Args {
-    /// Name of the person to greet
     #[clap(short, long)]
     first: Submission,
-
-    /// Name of the person to greet
     #[clap(short, long)]
     second: Submission,
 }
@@ -109,6 +105,7 @@ fn main() {
     let mut stdout_first = first_submission.stdout.take().unwrap();
     let mut stdout_second = second_submission.stdout.take().unwrap();
 
+    // Get rid of junk in the beginning of the output by seeking to the first "\n1\n"
     seek_to_fizz_start(&mut stdout_first).unwrap();
     seek_to_fizz_start(&mut stdout_second).unwrap();
 
@@ -147,7 +144,7 @@ fn main() {
                 (progress - last_progress) as f32 / 1024.0 / 1024.0 / 1024.0 / 1.0
             );
             last_update = Instant::now();
-            last_progress = progress
+            last_progress = progress;
         }
     }
 
