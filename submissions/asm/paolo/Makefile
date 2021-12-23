@@ -4,3 +4,7 @@ fb: fb.c
 .PHONY: run
 run: fb
 	taskset 1 ./fb | taskset 2 pv --force > /dev/null
+
+.PHONY: output
+output: fb
+	./fb

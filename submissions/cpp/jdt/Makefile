@@ -5,3 +5,6 @@ Johan: a.cpp
 run: Johan
 	./Johan | pv --force > /dev/null
 	
+.PHONY: output
+output: Johan
+	./Johan

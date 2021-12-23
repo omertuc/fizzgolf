@@ -5,3 +5,6 @@ fizz: fizz.cpp
 run: fizz
 	./fizz | pv --force > /dev/null
 	
+.PHONY: output
+output: fizz
+	./fizz

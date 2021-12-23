@@ -4,3 +4,7 @@
 .PHONY: run
 run: ./target/release/fizz_buzz
 	./target/release/fizz_buzz | pv --force > /dev/null
+
+.PHONY: output
+output: ./target/release/fizz_buzz
+	./target/release/fizz_buzz

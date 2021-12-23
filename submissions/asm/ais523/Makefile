@@ -7,3 +7,7 @@ fizzbuzz.o: fizzbuzz.S
 .PHONY: run
 run: fizzbuzz
 	taskset 1 ./fizzbuzz | taskset 2 pv --force > /dev/null
+
+.PHONY: output
+output: fizzbuzz
+	./fizzbuzz

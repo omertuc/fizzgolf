@@ -4,3 +4,7 @@ fizz: fizz.c
 .PHONY: run
 run: fizz
 	OMP_NUM_THREADS=3 ./fizz | pv --force > /dev/null
+
+.PHONY: output
+output: fizz
+	OMP_NUM_THREADS=3 ./fizz

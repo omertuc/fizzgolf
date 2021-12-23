@@ -65,7 +65,7 @@ def main():
 
     for lang in (script_dir / "submissions").glob("*"):
         for submission in lang.glob("*"):
-            if submission.is_dir() and not any(child.name == "TBD" for child in submission.iterdir()):
+            if submission.is_dir() and not any(child.name == "TBD" or child.name == "DISQUALIFIED" for child in submission.iterdir()):
                 if force is not None:
                     force_language, force_submission = force
                     if lang.name != force_language or submission.name != force_submission:
