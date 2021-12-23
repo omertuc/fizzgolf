@@ -96,7 +96,7 @@ fn seek_to_fizz_start<T: Read>(reader: &mut T) -> Result<(), std::io::Error> {
     }
 }
 
-const GIB: f64 = 1024.0 / 1024.0 / 1024.0;
+const GIB: f64 = 1024.0 * 1024.0 * 1024.0;
 
 fn main() {
     let args = Args::parse();
