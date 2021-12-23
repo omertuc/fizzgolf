@@ -96,6 +96,8 @@ fn seek_to_fizz_start<T: Read>(reader: &mut T) -> Result<(), std::io::Error> {
     }
 }
 
+const GIB: f64 = 1024.0 / 1024.0 / 1024.0;
+
 fn main() {
     let args = Args::parse();
 
@@ -140,8 +142,8 @@ fn main() {
         if Instant::now() - last_update > Duration::from_secs(1) {
             println!(
                 "Verified {:.2} GiB at {:.2} GiB/s",
-                (progress as f32) / 1024.0 / 1024.0 / 1024.0,
-                (progress - last_progress) as f32 / 1024.0 / 1024.0 / 1024.0 / 1.0
+                (progress as f64) / GIB,
+                (progress - last_progress) as f64 / GIB
             );
             last_update = Instant::now();
             last_progress = progress;
