@@ -1,26 +1,12 @@
 use clap::Parser;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-fn launch_submission(path: String) -> std::process::Child {
-    Command::new("make")
-        .arg("-C")
-        .arg(path)
-        .arg("output")
-        .stdout(std::process::Stdio::piped())
-        .spawn()
-        .expect("failed to execute process")
-}
-
 #[derive(Parser, Debug)]
-#[clap(about, version, author)]
 struct Args {
-    first: String,
-    second: String,
+    submissions: Vec<String>,
 }
-
-const BUFFER_SIZE: usize = (1024 * 1024) as usize;
 
 fn seek_to_fizz_start<T: Read>(reader: &mut T) -> Result<(), std::io::Error> {
     let mut buffer = [0; 1];
@@ -41,47 +27,61 @@ fn seek_to_fizz_start<T: Read>(reader: &mut T) -> Result<(), std::io::Error> {
 }
 
 const GIB: f64 = 1024.0 * 1024.0 * 1024.0;
+const BUFFER_SIZE: usize = 1024 * 1024;
 
 fn main() {
-    let args = Args::parse();
+    let submissions = Args::parse().submissions;
 
-    let mut first_submission = launch_submission(args.first);
-    let mut second_submission = launch_submission(args.second);
+    let mut childs = submissions
+        .iter()
+        .map(|path| {
+            Command::new("make")
+                .arg("-C")
+                .arg(path)
+                .arg("output")
+                .stdout(std::process::Stdio::piped())
+                .spawn()
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
 
-    let mut stdout_first = first_submission.stdout.take().unwrap();
-    let mut stdout_second = second_submission.stdout.take().unwrap();
+    let mut stdouts = childs
+        .iter_mut()
+        .map(|child| child.stdout.take().unwrap())
+        .collect::<Vec<_>>();
 
-    // Get rid of junk in the beginning of the output by seeking to the first "\n1\n"
-    seek_to_fizz_start(&mut stdout_first).unwrap();
-    seek_to_fizz_start(&mut stdout_second).unwrap();
+    stdouts
+        .iter_mut()
+        .try_for_each(|stdout| seek_to_fizz_start(stdout))
+        .unwrap();
+
+    let mut buffers = (0..stdouts.len())
+        .map(|_| [0; BUFFER_SIZE])
+        .collect::<Vec<_>>();
 
     let mut progress = 0 as usize;
     let mut last_progress = 0 as usize;
     let mut last_update = Instant::now();
 
-    static mut BUF1: [u8; BUFFER_SIZE] = [0; BUFFER_SIZE];
-    static mut BUF2: [u8; BUFFER_SIZE] = [0; BUFFER_SIZE];
-
     loop {
-        unsafe {
-            stdout_first.read_exact(&mut BUF1).unwrap();
-            stdout_second.read_exact(&mut BUF2).unwrap();
+        stdouts
+            .iter_mut()
+            .zip(buffers.iter_mut())
+            .try_for_each(|(stdout, buffer)| stdout.read_exact(buffer))
+            .unwrap();
 
-            let slice1 = &BUF1[..BUFFER_SIZE];
-            let slice2 = &BUF2[..BUFFER_SIZE];
-
-            if slice1 != slice2 {
-                let s1 = String::from_utf8(slice1.to_vec()).unwrap();
-                let s2 = String::from_utf8(slice2.to_vec()).unwrap();
-
-                println!("{}\n======\n{}", s1, s2);
-                dbg!(slice1);
-                dbg!(slice2);
-                break;
+        if !buffers.iter().all(|buffer| *buffer == buffers[0]) {
+            println!("Not all submissions match! Dumping current buffer to files, run `sha256sum buffer*.bin` to check.");
+            for (buffer, submission) in buffers.iter().zip(submissions) {
+                std::fs::File::create(format!("buffer{}.bin", submission.replace("/", "-")))
+                    .unwrap()
+                    .write_all(buffer)
+                    .unwrap();
             }
-
-            progress += BUFFER_SIZE;
+            break;
         }
+
+        progress += BUFFER_SIZE;
 
         if Instant::now() - last_update > Duration::from_secs(1) {
             let progress_gib = (progress as f64) / GIB;
@@ -92,9 +92,5 @@ fn main() {
         }
     }
 
-    first_submission.kill().unwrap();
-    first_submission.wait().unwrap();
-
-    second_submission.kill().unwrap();
-    second_submission.wait().unwrap();
+    childs.iter_mut().for_each(|sub| sub.kill().unwrap());
 }

@@ -47,3 +47,8 @@ cargo install --path tester
 fizztester submissions/c/xiver77 submissions/c/isaacg
 ```
 
+You can also check all submissions at the same time, with something like:
+```bash
+cargo install --path tester
+fizztester submissions/c/*
+```
