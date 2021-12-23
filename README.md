@@ -40,3 +40,10 @@ A fairly modern Java version, clang, g++, gcc, Ruby, Rust, Julia, Python3, pypy3
 # Contributing
 If you want to change the content of your submission / how it's ran/built or improve anything else feel free to create pull requests
 
+# Verifying Submission
+You can verify submissions by pitting them against each other:
+```bash
+cargo install --path tester
+fizztester --first "c xiver77" --second "c isaacg"
+```
+
