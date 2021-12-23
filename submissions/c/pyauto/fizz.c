@@ -1,7 +1,5 @@
 #include <stdio.h> 
 #include <string.h>
-#include <unistd.h>
-#include <stdlib.h>
 
 #define SIZE (4096 << 4)
 
@@ -14,8 +12,8 @@ int main(void) {
   _Bool d3;
   _Bool d5;
   for (int n=1; 1; n++) {
-    if ((buf - buffer) >= SIZE-10) {
-      write(1, buffer, SIZE);
+    if ((buf - buffer) >= SIZE) {
+      printf("%s", buffer);
       buf = buffer;
     }
 
