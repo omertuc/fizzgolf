@@ -16,12 +16,9 @@ fn seek_to_fizz_start<T: Read>(reader: &mut T) -> Result<(), std::io::Error> {
         reader.read_exact(&mut buffer)?;
         state = match state {
             0 if buffer[0] == b'\n' => 1,
-            0 => 0,
             1 if buffer[0] == b'1' => 2,
-            1 => 0,
             2 if buffer[0] == b'\n' => return Ok(()),
-            2 => 0,
-            _ => unreachable!(),
+            _ => 0,
         }
     }
 }
