@@ -1,7 +1,7 @@
 use clap::Parser;
 use std::io::Read;
-use std::time::{Duration, Instant};
 use std::process::Command;
+use std::time::{Duration, Instant};
 
 fn launch_submission(path: String) -> std::process::Child {
     Command::new("make")
@@ -16,9 +16,7 @@ fn launch_submission(path: String) -> std::process::Child {
 #[derive(Parser, Debug)]
 #[clap(about, version, author)]
 struct Args {
-    #[clap(short, long)]
     first: String,
-    #[clap(short, long)]
     second: String,
 }
 
