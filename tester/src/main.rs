@@ -1,48 +1,7 @@
 use clap::Parser;
 use std::io::Read;
-use std::path::Path;
 use std::time::{Duration, Instant};
-use std::{process::Command, str::FromStr};
-
-#[derive(Debug)]
-struct Submission {
-    language: String,
-    name: String,
-}
-
-impl Submission {
-    fn path(&self) -> String {
-        Path::new("submissions")
-            .join(&self.language)
-            .join(&self.name)
-            .to_str()
-            .unwrap()
-            .to_string()
-    }
-}
-
-impl FromStr for Submission {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let mut parts = s.split_whitespace();
-        let language = parts.next().ok_or("No language specified")?;
-        let name = parts.next().ok_or("No name specified")?;
-        Ok(Submission {
-            language: language.to_string(),
-            name: name.to_string(),
-        })
-    }
-}
-
-#[derive(Parser, Debug)]
-#[clap(about, version, author)]
-struct Args {
-    #[clap(short, long)]
-    first: Submission,
-    #[clap(short, long)]
-    second: Submission,
-}
+use std::process::Command;
 
 fn launch_submission(path: String) -> std::process::Child {
     Command::new("make")
@@ -52,6 +11,15 @@ fn launch_submission(path: String) -> std::process::Child {
         .stdout(std::process::Stdio::piped())
         .spawn()
         .expect("failed to execute process")
+}
+
+#[derive(Parser, Debug)]
+#[clap(about, version, author)]
+struct Args {
+    #[clap(short, long)]
+    first: String,
+    #[clap(short, long)]
+    second: String,
 }
 
 const BUFFER_SIZE: usize = (1024 * 1024) as usize;
@@ -71,24 +39,26 @@ fn seek_to_fizz_start<T: Read>(reader: &mut T) -> Result<(), std::io::Error> {
             ));
         }
 
-        match state {
+        state = match state {
             0 => {
                 if buffer[0] == b'\n' {
-                    state = 1;
+                    1
+                } else {
+                    0
                 }
             }
             1 => {
                 if buffer[0] == b'1' {
-                    state = 2;
+                    2
                 } else {
-                    state = 0;
+                    0
                 }
             }
             2 => {
                 if buffer[0] == b'\n' {
                     return Ok(());
                 } else {
-                    state = 0;
+                    0
                 }
             }
             _ => unreachable!(),
@@ -101,8 +71,8 @@ const GIB: f64 = 1024.0 * 1024.0 * 1024.0;
 fn main() {
     let args = Args::parse();
 
-    let mut first_submission = launch_submission(args.first.path());
-    let mut second_submission = launch_submission(args.second.path());
+    let mut first_submission = launch_submission(args.first);
+    let mut second_submission = launch_submission(args.second);
 
     let mut stdout_first = first_submission.stdout.take().unwrap();
     let mut stdout_second = second_submission.stdout.take().unwrap();

@@ -44,6 +44,6 @@ If you want to change the content of your submission / how it's ran/built or imp
 You can verify submissions by pitting them against each other:
 ```bash
 cargo install --path tester
-fizztester --first "c xiver77" --second "c isaacg"
+fizztester --first "submissions/c/xiver77" --second "submissions/c/isaacg"
 ```
 
