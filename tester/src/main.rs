@@ -71,9 +71,9 @@ fn main() {
             .unwrap();
 
         if !buffers.iter().all(|buffer| *buffer == buffers[0]) {
-            println!("Not all submissions match! Dumping current buffer to files, run `sha256sum buffer*.bin` to check.");
+            println!("Not all submissions match! Dumping current buffer to files, run `sha256sum buffer-*.bin` to check.");
             for (buffer, submission) in buffers.iter().zip(submissions) {
-                std::fs::File::create(format!("buffer{}.bin", submission.replace("/", "-")))
+                std::fs::File::create(format!("buffer-{}.bin", submission.replace("/", "-")))
                     .unwrap()
                     .write_all(buffer)
                     .unwrap();
