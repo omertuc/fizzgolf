@@ -1,7 +1,13 @@
 use clap::Parser;
 use std::io::{Read, Write};
-use std::process::Command;
+use std::process::{Child, Command};
 use std::time::{Duration, Instant};
+
+const KIB: usize = 1024;
+const MIB: usize = KIB * 1024;
+const GIB: usize = MIB * 1024;
+
+const BUFFER_SIZE: usize = 64 * KIB;
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -11,9 +17,12 @@ struct Args {
 fn seek_to_fizz_start<T: Read>(reader: &mut T) -> Result<(), std::io::Error> {
     let mut buffer = [0; 1];
     let mut state = 0;
+    let mut skipped = 0;
 
-    loop {
+    while skipped < 300 * KIB {
         reader.read_exact(&mut buffer)?;
+        skipped += 1;
+
         state = match state {
             0 if buffer[0] == b'\n' => 1,
             1 if buffer[0] == b'1' => 2,
@@ -21,15 +30,33 @@ fn seek_to_fizz_start<T: Read>(reader: &mut T) -> Result<(), std::io::Error> {
             _ => 0,
         }
     }
+
+    Err(std::io::Error::new(
+        std::io::ErrorKind::InvalidData,
+        "FizzBuzz start (newline followed by the number 1 followed by another newline) not found after 300 KiB of output, please revise your submission",
+    ))
 }
 
-const GIB: f64 = 1024.0 * 1024.0 * 1024.0;
-const BUFFER_SIZE: usize = 64 * 1024;
+struct DroppableChild {
+    inner: Child,
+}
+
+impl Drop for DroppableChild {
+    fn drop(&mut self) {
+        self.inner.kill().unwrap();
+    }
+}
+
+impl From<Child> for DroppableChild {
+    fn from(child: Child) -> Self {
+        DroppableChild { inner: child }
+    }
+}
 
 fn main() {
     let submissions = Args::parse().submissions;
 
-    let mut childs = submissions
+    let mut childs: Vec<DroppableChild> = submissions
         .iter()
         .map(|path| {
             Command::new("make")
@@ -38,19 +65,20 @@ fn main() {
                 .arg("output")
                 .stdout(std::process::Stdio::piped())
                 .spawn()
+                .expect("Failed to spawn make")
         })
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap();
+        .map(DroppableChild::from)
+        .collect();
 
     let mut stdouts = childs
         .iter_mut()
-        .map(|child| child.stdout.take().unwrap())
+        .map(|child| child.inner.stdout.take().unwrap())
         .collect::<Vec<_>>();
 
     stdouts
         .iter_mut()
         .try_for_each(|stdout| seek_to_fizz_start(stdout))
-        .unwrap();
+        .expect("FizzBuzz start not found");
 
     let mut buffers = (0..stdouts.len())
         .map(|_| [0; BUFFER_SIZE])
@@ -81,13 +109,11 @@ fn main() {
         progress += BUFFER_SIZE;
 
         if Instant::now() - last_update > Duration::from_secs(1) {
-            let progress_gib = (progress as f64) / GIB;
-            let rate_gib = (progress - last_progress) as f64 / GIB;
+            let progress_gib = (progress as f64) / GIB as f64;
+            let rate_gib = (progress - last_progress) as f64 / GIB as f64;
             println!("Verified {:.2} GiB at {:.2} GiB/s", progress_gib, rate_gib);
             last_update = Instant::now();
             last_progress = progress;
         }
     }
-
-    childs.iter_mut().for_each(|sub| sub.kill().unwrap());
 }
