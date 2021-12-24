@@ -2,6 +2,7 @@ use clap::Parser;
 use std::io::{Read, Write};
 use std::process::{Child, Command};
 use std::time::{Duration, Instant};
+use derive_deref::{Deref, DerefMut};
 
 const KIB: usize = 1024;
 const MIB: usize = KIB * 1024;
@@ -37,19 +38,18 @@ fn seek_to_fizz_start<T: Read>(reader: &mut T) -> Result<(), std::io::Error> {
     ))
 }
 
-struct DroppableChild {
-    inner: Child,
-}
+#[derive(Deref, DerefMut)]
+struct DroppableChild(Child);
 
 impl Drop for DroppableChild {
     fn drop(&mut self) {
-        self.inner.kill().unwrap();
+        self.0.kill().unwrap();
     }
 }
 
 impl From<Child> for DroppableChild {
     fn from(child: Child) -> Self {
-        DroppableChild { inner: child }
+        DroppableChild(child)
     }
 }
 
@@ -72,7 +72,7 @@ fn main() {
 
     let mut stdouts = childs
         .iter_mut()
-        .map(|child| child.inner.stdout.take().unwrap())
+        .map(|child| child.stdout.take().unwrap())
         .collect::<Vec<_>>();
 
     stdouts
