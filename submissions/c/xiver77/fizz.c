@@ -2,7 +2,6 @@
 #include <stdbool.h>
 #include <inttypes.h>
 #include <stdalign.h>
-#include <sys/mman.h>
 #include <fcntl.h>
 #include <tmmintrin.h>
 
