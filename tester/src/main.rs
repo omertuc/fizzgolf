@@ -47,12 +47,6 @@ impl Drop for DroppableChild {
     }
 }
 
-impl From<Child> for DroppableChild {
-    fn from(child: Child) -> Self {
-        DroppableChild(child)
-    }
-}
-
 fn main() {
     let submissions = Args::parse().submissions;
 
@@ -67,7 +61,7 @@ fn main() {
                 .spawn()
                 .expect("Failed to spawn make")
         })
-        .map(DroppableChild::from)
+        .map(DroppableChild)
         .collect();
 
     let mut stdouts = childs
