@@ -81,7 +81,7 @@ static __m128i fat(__m128i d) {
 }
 
 static void memcpy_fast(char *a, char *b, unsigned n) {
-    for (int i = 0; i < n; i += sizeof(__m128i)) {
+    for (unsigned i = 0; i < n; i += sizeof(__m128i)) {
         __m128i r = _mm_load_si128((__m128i *)(b + i));
         _mm_store_si128((__m128i *)(a + i), r);
     }
