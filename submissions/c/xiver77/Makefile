@@ -3,7 +3,7 @@ fizz: fizz.c
 
 .PHONY: run
 run: fizz
-	./fizz | pv --force > /dev/null
+	taskset 1 ./fizz | taskset 2 pv --force > /dev/null
 
 .PHONY: output
 output: fizz
