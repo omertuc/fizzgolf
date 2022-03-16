@@ -1,4 +1,4 @@
-fizzbuzz: fizz.c
+fizz: fizz.c
 	clang -o fizz fizz.c -O3 -march=native
 
 .PHONY: run

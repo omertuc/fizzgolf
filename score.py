@@ -24,7 +24,7 @@ def read_from_pipe(proc, event, append_data):
 def test_submission(submission: Path):
     print(f"Testing {submission.name}")
     with subprocess.Popen(
-        ["make", "run"], cwd=submission, stderr=subprocess.PIPE, universal_newlines=True, preexec_fn=os.setsid
+        ["make", "--no-builtin-rules", "run"], cwd=submission, stderr=subprocess.PIPE, universal_newlines=True, preexec_fn=os.setsid
     ) as proc:
         # Read from pipe in a thread
         event = Event()
