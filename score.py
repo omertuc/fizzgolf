@@ -54,9 +54,12 @@ def main():
     if len(sys.argv) == 3:
         # Run just the language/submission combo specified in the command line
         force = (sys.argv[1], sys.argv[2])
-    else:
+    elif len(sys.argv) == 1:
         # Run all languages/submissions
         force = None
+    else:
+        print(f"USAGE: {sys.argv[0]} [language] [submission]")
+        sys.exit(1)
 
     results_file = script_dir / "results.json"
 
@@ -65,7 +68,7 @@ def main():
         # Try to load all results from previous results file
         if results_file.exists():
             with open(results_file, "r") as f:
-                results = json.load(f)
+                results = defaultdict(dict, json.load(f))
 
     for lang in (script_dir / "submissions").glob("*"):
         for submission in lang.glob("*"):

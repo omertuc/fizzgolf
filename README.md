@@ -35,7 +35,7 @@ This repo contains the submissions to the https://codegolf.stackexchange.com/que
 - [ ] Use MiB/s for slower languages
 
 # Requirements
-A fairly modern Java version, clang, g++, gcc, Ruby, Rust, Julia, Python3, pypy3, and maybe some other toolchains I forgot
+A fairly modern Java version, clang, g++, gcc, Ruby, Rust, Julia, Python3 (with requirements), pypy3, and maybe some other toolchains I forgot
 
 # Contributing
 If you want to change the content of your submission / how it's ran/built or improve anything else feel free to create pull requests
