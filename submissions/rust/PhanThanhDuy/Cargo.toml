@@ -1,0 +1,9 @@
+[package]
+name = "fizzbuzz"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+nix = "0.24.1"
+libc = "*"
+itoap = "*"
