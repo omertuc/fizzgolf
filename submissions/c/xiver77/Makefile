@@ -1,5 +1,5 @@
 fizz: fizz.c
-	gcc -std=c11 -Ofast -mtune=native -mssse3 -fwhole-program -s -o fizz fizz.c
+	gcc -s -O3 -msse4.1 -fwhole-program -ofizz fizz.c
 
 .PHONY: run
 run: fizz
