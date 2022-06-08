@@ -108,13 +108,14 @@ int main() {
     if (n >= 0) {
       struct iovec v = {b[f], SIZE};
       do {
-        register long rax __asm__ ("rax") = 278;
+        /*register long rax __asm__ ("rax") = 278;
         register long rdi __asm__ ("rdi") = 1;
         register long rsi __asm__ ("rsi") = (long)&v;
         register long rdx __asm__ ("rdx") = 1;
         register long r10 __asm__ ("r10") = 0;
         __asm__ ("syscall" : "+r"(rax) : "r"(rdi), "r"(rsi), "r"(rdx), "r"(r10)
-        : "rcx", "r11");
+        : "rcx", "r11");*/
+        long rax = vmsplice(1, &v, 1, 0);
         if (rax < 0) {
           abort();
         }
