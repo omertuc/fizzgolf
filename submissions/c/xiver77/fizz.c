@@ -33,10 +33,10 @@ static __m128i carry(__m128i d) {
   d = _mm_sub_epi64(d,
     _mm_bslli_si128(_mm_cmpeq_epi64(d, _mm_setzero_si128()), 8));
   return _mm_or_si128(d,
-    _mm_and_si128(_mm_cmpeq_epi8(d, _mm_setzero_si128()), _mm_set1_epi8(-10)));
+    _mm_and_si128(_mm_cmpeq_epi8(d, _mm_setzero_si128()), _mm_set1_epi8(0xf6)));
 }
 
-static int writeDigits(char *b, __m128i d, size_t i) {
+static int writeDigits(char *b, __m128i d, int i) {
   _mm_storeu_si128((__m128i *)b,
     _mm_shuffle_epi8(
       _mm_shuffle_epi8(_mm_sub_epi64(d, _mm_set1_epi8(0xc6)),
@@ -47,25 +47,25 @@ static int writeDigits(char *b, __m128i d, size_t i) {
 }
 
 static int writeFizz(void *b) {
-  memcpy(b, &(uint64_t){0x0a7a7a6946}, 8);
+  memcpy(b, &(int64_t){0x0a7a7a6946}, 8);
   return 5;
 }
 
 static int writeFizzBuzz(void *b) {
-  memcpy(b, &(uint64_t){0x7a7a75427a7a6946}, 8);
+  memcpy(b, &(int64_t){0x7a7a75427a7a6946}, 8);
   ((char *)b)[8] = '\n';
   return 9;
 }
 
 static int writeFizzAndBuzz(void *b) {
-  memcpy(b, &(uint64_t){0x7a75420a7a7a6946}, 8);
-  memcpy(b + 8, &(uint16_t){0x0a7a}, 2);
+  memcpy(b, &(int64_t){0x7a75420a7a7a6946}, 8);
+  memcpy(b + 8, &(int16_t){0x0a7a}, 2);
   return 10;
 }
 
 static int writeBuzzAndFizz(void *b) {
-  memcpy(b, &(uint64_t){0x7a69460a7a7a7542}, 8);
-  memcpy(b + 8, &(uint16_t){0x0a7a}, 2);
+  memcpy(b, &(int64_t){0x7a69460a7a7a7542}, 8);
+  memcpy(b + 8, &(int16_t){0x0a7a}, 2);
   return 10;
 }
 
@@ -94,9 +94,9 @@ int main() {
   alignas(ALIGN) char b[2][SIZE + ALIGN];
   int f = 0;
   char *p = b[f];
-  __m128i d = _mm_set1_epi8(-10);
-  size_t i = 15;
-  for (uint64_t j = 10, k = 10;; j += 30) {
+  __m128i d = _mm_set1_epi8(0xf6);
+  int i = 15;
+  for (int64_t j = 10, k = 10;; j += 30) {
     D; D; F; D; BNF; D; D; I; IC; p += writeFizzAndBuzz(p);
     if (j == k) {
       k *= 10;
@@ -108,12 +108,18 @@ int main() {
     if (n >= 0) {
       struct iovec v = {b[f], SIZE};
       do {
-        int n = vmsplice(1, &v, 1, 0);
-        if (n < 0) {
+        register long rax __asm__ ("rax") = 278;
+        register long rdi __asm__ ("rdi") = 1;
+        register long rsi __asm__ ("rsi") = (long)&v;
+        register long rdx __asm__ ("rdx") = 1;
+        register long r10 __asm__ ("r10") = 0;
+        __asm__ ("syscall" : "+r"(rax) : "r"(rdi), "r"(rsi), "r"(rdx), "r"(r10)
+        : "rcx", "r11");
+        if (rax < 0) {
           abort();
         }
-        v.iov_base = (char *)v.iov_base + n;
-        v.iov_len -= n;
+        v.iov_base = (char *)v.iov_base + rax;
+        v.iov_len -= rax;
       } while (v.iov_len);
       f = !f;
       memcpy_simple(b[f], b[!f] + SIZE, n);
