@@ -41,7 +41,7 @@ public final class FizzBuzz {
         queue.offer(executor.submit(new Task(counter, buffer)));
         counter += FULL_INCREMENT;
       }
-      channel.write(ByteBuffer.wrap("1\n2\nFizz\n4\nBuzz\nFizz\n7\n8\nBuzz\nFizz\n".getBytes(US_ASCII)));
+      channel.write(ByteBuffer.wrap("1\n2\nFizz\n4\nBuzz\nFizz\n7\n8\nFizz\nBuzz\n".getBytes(US_ASCII)));
       while (true) {
         var buffer = queue.poll().get();
         channel.write(buffer);
