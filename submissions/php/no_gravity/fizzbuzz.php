@@ -3,7 +3,7 @@
 
 ob_start();
 
-for ($i = 0; $i < 100000000; $i++) {
+for ($i = 0; $i < PHP_INT_MAX; $i++) {
         $out = $i;
         if ($i % 3 === 0) $out = 'fizz';
         if ($i % 5 === 0) {
