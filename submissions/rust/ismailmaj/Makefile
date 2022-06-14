@@ -1,3 +1,4 @@
+.PHONY: ./target/release/high-throughput-fizzbuzz
 ./target/release/high-throughput-fizzbuzz:
 	cargo build --release
 

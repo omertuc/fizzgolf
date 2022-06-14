@@ -1,3 +1,4 @@
+.PHONY: ./target/release/xavier
 ./target/release/xavier:
 	cargo build --release
 

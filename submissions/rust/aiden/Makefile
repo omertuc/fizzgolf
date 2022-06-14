@@ -1,3 +1,4 @@
+.PHONY: ./target/release/fizz_buzz
 ./target/release/fizz_buzz:
 	cargo build --release
 
