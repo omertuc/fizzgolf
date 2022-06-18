@@ -6,7 +6,8 @@ RUN apt-get install -y \
 		zlib1g-dev \
 		libpng-dev \
 		libfreetype6-dev \
-		libjpeg62-turbo-dev
+		libjpeg62-turbo-dev \
+		pv
 
 RUN	docker-php-ext-configure gd --with-freetype --with-jpeg
 
