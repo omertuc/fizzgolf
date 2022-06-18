@@ -1,8 +1,10 @@
+#![feature(result_option_inspect)]
+
 use clap::Parser;
-use std::io::{Read, Write};
-use std::process::{Child, Command};
-use std::time::{Duration, Instant};
 use derive_deref::{Deref, DerefMut};
+use std::io::{Read, Write};
+use std::process::{exit, Child, Command};
+use std::time::{Duration, Instant};
 
 const KIB: usize = 1024;
 const MIB: usize = KIB * 1024;
@@ -50,6 +52,11 @@ impl Drop for DroppableChild {
 fn main() {
     let submissions = Args::parse().submissions;
 
+    if submissions.len() < 2 {
+        println!("Need at-least 2 submissions");
+        exit(1);
+    }
+
     let mut childs: Vec<DroppableChild> = submissions
         .iter()
         .map(|path| {
@@ -71,15 +78,15 @@ fn main() {
 
     stdouts
         .iter_mut()
-        .try_for_each(|stdout| seek_to_fizz_start(stdout))
+        .try_for_each(seek_to_fizz_start)
         .expect("FizzBuzz start not found");
 
     let mut buffers = (0..stdouts.len())
         .map(|_| [0; BUFFER_SIZE])
         .collect::<Vec<_>>();
 
-    let mut progress = 0 as usize;
-    let mut last_progress = 0 as usize;
+    let mut progress = 0_usize;
+    let mut last_progress = 0_usize;
     let mut last_update = Instant::now();
 
     loop {
@@ -87,12 +94,18 @@ fn main() {
             .iter_mut()
             .zip(buffers.iter_mut())
             .try_for_each(|(stdout, buffer)| stdout.read_exact(buffer))
+            .inspect_err(|err| {
+                println!(
+                    "Failed to read from stdout: {} buf: {:?} buf: {:?}",
+                    err, buffers[0], buffers[1]
+                )
+            })
             .unwrap();
 
         if !buffers.iter().all(|buffer| *buffer == buffers[0]) {
             println!("Not all submissions match! Dumping current buffer to files, run `sha256sum buffer-*.bin` to check.");
             for (buffer, submission) in buffers.iter().zip(submissions) {
-                std::fs::File::create(format!("buffer-{}.bin", submission.replace("/", "-")))
+                std::fs::File::create(format!("buffer-{}.bin", submission.replace('/', "-")))
                     .unwrap()
                     .write_all(buffer)
                     .unwrap();
