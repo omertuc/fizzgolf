@@ -1,5 +1,3 @@
-#![feature(result_option_inspect)]
-
 use clap::Parser;
 use derive_deref::{Deref, DerefMut};
 use std::io::{Read, Write};
@@ -10,7 +8,7 @@ const KIB: usize = 1024;
 const MIB: usize = KIB * 1024;
 const GIB: usize = MIB * 1024;
 
-const BUFFER_SIZE: usize = 64 * KIB;
+const BUFFER_SIZE: usize = 512 * KIB;
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -94,13 +92,7 @@ fn main() {
             .iter_mut()
             .zip(buffers.iter_mut())
             .try_for_each(|(stdout, buffer)| stdout.read_exact(buffer))
-            .inspect_err(|err| {
-                println!(
-                    "Failed to read from stdout: {} buf: {:?} buf: {:?}",
-                    err, buffers[0], buffers[1]
-                )
-            })
-            .unwrap();
+            .expect("Failed to read from stdout");
 
         if !buffers.iter().all(|buffer| *buffer == buffers[0]) {
             println!("Not all submissions match! Dumping current buffer to files, run `sha256sum buffer-*.bin` to check.");
