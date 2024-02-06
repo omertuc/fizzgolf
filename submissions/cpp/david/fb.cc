@@ -6,7 +6,6 @@
 #include <cstring>
 #include <fcntl.h>
 #include <iostream>
-#include <omp.h>
 #include <optional>
 #include <thread>
 #include <sys/mman.h>
@@ -22,63 +21,88 @@ constexpr int64_t PowTen(int x) {
   return result;
 }
 
+// We process each batch in parallel from |kParallelism| threads. This number
+// should be set to the available CPU cores or less. Note that higher number
+// doesn't necessarily mean better performance due to the synchronization
+// overhead between threads.
+constexpr int64_t kParallelism = 7;
 // The last kSuffixDigits digits of each number line are untouched when
 // iterating.
-constexpr int64_t kSuffixDigits = 5;
+constexpr int64_t kSuffixDigits = 6;
 // Increment the first right-most touched digit by this much in one step. Must
-// be divisible by 6. The code currently only handles when this is single-digit.
-constexpr int64_t kIncrementBy = 6;
-constexpr int64_t kLinesInChunk = PowTen(kSuffixDigits);
-constexpr int64_t kChunksInHalfBatch = kIncrementBy / 2;
-constexpr int64_t kMaxLinesInHalfBatch = kLinesInChunk * kChunksInHalfBatch;
+// be divisible by 3. The code currently only handles when this is single-digit.
+constexpr int64_t kIncrementBy = 3;
+// One batch contains maximum this many lines.
+constexpr int64_t kMaxLinesInBatch = PowTen(kSuffixDigits) * kIncrementBy / 3;
 
 constexpr int kFizzLength = 4;
 constexpr int kBuzzLength = 4;
 constexpr int kNewlineLength = 1;
 
-// Implements a double-buffering mechanism for efficient output.
-// We work with two buffers, a output buffer and an update buffer.
-// GetUpdateBuffer() can be written to. Afterwards, upon calling Output(),
-// the buffer is copied or moved to the standard output. Following Output(),
-// GetUpdateBuffer() returns the second buffer.
-// The class ensures that GetUpdateBuffer() can always be updated (without
-// a race condition).
-// The current limitation is that Output must be invoked with monotonically
-// increasing sizes.
+// A barrier that busy waits until all other threads reach the barrier.
+template <typename Completion>
+class SpinningBarrier {
+ public:
+  // Constructs a spinning barrier with |count| participating threads and
+  // completion callback |completion_cb|.
+  // After all threads reach the barrier, the last thread executes the
+  // completion callback. The other threads are blocked until the completion
+  // callback returns.
+  SpinningBarrier(int64_t count, Completion completion_cb) :
+      count_(count), spaces_(count), generation_(0),
+      completion_cb_(completion_cb) {}
+
+  void Wait() {
+      int64_t my_generation = generation_;
+      if (!--spaces_) {
+          spaces_ = count_;
+          completion_cb_();
+          ++generation_;
+      } else {
+          while(generation_ == my_generation);
+      }
+  }
+
+ private:
+  int64_t count_;
+  std::atomic<int64_t> spaces_;
+  std::atomic<int64_t> generation_;
+  Completion completion_cb_;
+};
+
+// Owns the output buffers and maintains which buffer was used last.
 class OutputHandler {
- static constexpr size_t kBufferSize = 4 * 1024 * 1024;
+ static constexpr size_t kBufferSize = 14 * 1024 * 1024;
 
  public:
   OutputHandler() {
-    output_buffer =
+    for (int i = 0; i < 3; ++i) {
+      buffers_[i] =
         static_cast<char*>(aligned_alloc(2 * 1024 * 1024, kBufferSize));
-    update_buffer =
-        static_cast<char*>(aligned_alloc(2 * 1024 * 1024, kBufferSize));
-    madvise(output_buffer, kBufferSize, MADV_HUGEPAGE);
-    madvise(update_buffer, kBufferSize, MADV_HUGEPAGE);
+      madvise(buffers_[i], kBufferSize, MADV_HUGEPAGE);
+    }
   }
 
   ~OutputHandler() {
-    free(output_buffer);
-    free(update_buffer);
+    for (int i = 0; i < 3; ++i) {
+      free(buffers_[i]);
+    }
   }
 
-  // Swaps the buffers and outputs |bytes| number of bytes from
-  // |GetUpdateBuffer()|. Must be invoked with monotonically increasing sizes.
-  void Output(size_t bytes) {
-    std::swap(output_buffer, update_buffer);
-    // We use double-buffering: we put |output_buffer| into the pipe and allow
-    // the program to update |update_buffer|. We have to ensure that no part of
-    // |update_buffer| is in the pipe while updating it. Afaik there is no API
-    // to track that, so we have to make the pipe size smaller than bytes to
-    // ensure that when OutputWithVmSplice returns, the pipe only contains data
-    // from |output_buffer|, therefore it's safe to update |update_buffer|.
-    // If the pipe is too small, the program will be slower. The optimum is
-    // calculated by TargetPipeSize. Since there is a minimum pipe size which we
+  void Output(int buffer_id, size_t bytes) {
+    // We use three buffers. We have to ensure that while a buffer (or its
+    // part) is in the pipe, it won't get modified. There is no API to know
+    // when a downstream process is finished reading some data from the pipe,
+    // so we choose the size of the pipe smartly.
+    // As long as the pipe cannot fit more than two full buffers, we can ensure
+    // that after after outputting buffer 0, 1, 2 in this order, the pipe no
+    // longer contains data from buffer 0. However, if we make the pipe too
+    // small, the program will be slower. The optimal pipe size is calculated by
+    // TargetPipeSize. Since there is a minimum pipe size which we
     // cannot go below (4kb on Linux), this approach won't work when the
-    // size is too small. In these cases we fall back to write() which copies
-    // the content into the pipe, therefore there is no risk of overwriting
-    // memory that is still being read from the downstream process.
+    // buffer size is too small. In these cases we fall back to write() which
+    // copies the content into the pipe, therefore there is no risk of
+    // overwriting memory that is still being read from the downstream process.
     // However, if in the subsequent call to Output(), a smaller size were
     // passed (and therefore the else branch were executed), the pipe could
     // still end up containing some data from the current iteration and the
@@ -86,33 +110,51 @@ class OutputHandler {
     // invoked with monotonically increasing sizes (which is true in practice
     // but it'd be better not to depend on this assumption).
     SetPipeSize(TargetPipeSize(bytes));
-    if (bytes >= pipe_size_) {
-      OutputWithVmSplice(bytes);
+    if (2 * bytes >= pipe_size_) {
+      OutputWithVmSplice(buffers_[buffer_id], bytes);
     } else {
-      if (write(STDOUT_FILENO, output_buffer, bytes) < 0) {
+      if (write(STDOUT_FILENO, buffers_[buffer_id], bytes) < 0) {
         std::cerr << "write error: " << errno;
         std::abort();
       }
     }
   }
 
-  // Calculates the optimal pipe size for outputting |out_bytes|.
-  size_t TargetPipeSize(size_t out_bytes) {
-    // Pipe sizes must be powers of 2 and >= 4kb on Linux.
-    // We want that the entire output fills up the pipe (but still maximize
-    // the pipe size), so we round |out_bytes| down to the nearest power or two.
-    return std::max(4ul * 1024, std::bit_floor(out_bytes));
+  char* GetBuffer(int buffer_id) {
+    return buffers_[buffer_id];
   }
 
-  void OutputWithVmSplice(size_t bytes) {
+  // Returns the next buffer id that can be filled up and outputted.
+  // Callers are responsible to actually output the buffer after requesting it
+  // with this method.
+  int NextBufferId() {
+    buffer_id_ = (buffer_id_ + 1) % 3;
+    return buffer_id_;
+  }
+
+  static constexpr int64_t BufferSize() {
+    return kBufferSize;
+  }
+
+ private:
+  // Calculates the optimal pipe size for outputting |out_bytes|.
+  size_t TargetPipeSize(size_t out_bytes) const {
+    // Pipe sizes must be powers of 2 and >= 4kb on Linux.
+    // We want that the pipe is not bigger than twice the output (but still
+    // maximize the pipe size), so we round |out_bytes| up to the nearest power
+    // of two.
+    return std::max(4ul * 1024, std::bit_ceil(out_bytes));
+  }
+
+  void OutputWithVmSplice(char* buffer, size_t bytes) const {
     iovec iov;
-    iov.iov_base = output_buffer;
+    iov.iov_base = buffer;
     iov.iov_len = bytes;
     while (true) {
       int64_t ret = vmsplice(STDOUT_FILENO, &iov, 1, SPLICE_F_NONBLOCK);
       if (ret >= 0) {
         iov.iov_len -= ret;
-        iov.iov_base = static_cast<char*>(iov.iov_base) + ret;
+        iov.iov_base = reinterpret_cast<char*>(iov.iov_base) + ret;
         if (iov.iov_len == 0) {
           break;
         }
@@ -140,14 +182,9 @@ class OutputHandler {
     pipe_size_ = new_pipe_size;
   }
 
-  char* GetUpdateBuffer() {
-    return update_buffer;
-  }
-
- private:
-  char* output_buffer;
-  char* update_buffer;
-  size_t pipe_size_ = 0;
+  std::array<char*, 3> buffers_;
+  int buffer_id_ = 0;
+  size_t pipe_size_;
 };
 
 // Inserts the fizzbuzz line for line number |line| and a newline character
@@ -171,12 +208,6 @@ char* InsertFizzBuzzLine(char* out, int64_t line) {
   }
 }
 
-// Returns whether this number is printed as-is ie. it's not a multiply of 3
-// or 5.
-constexpr bool IsFizzBuzzNumber(int64_t number) {
-  return number % 3 != 0 && number % 5 != 0;
-}
-
 // A run refers to all lines where the line numbers have |DIGITS| digits.
 // Run<1>: [1,9]
 // Run<2>: [10,99]
@@ -198,7 +229,7 @@ class Run {
     }
   }
 
-  // One fifteener takes this many bytes.
+  // Returns the size of one fifteener in bytes.
   static constexpr size_t FifteenerBytes() {
     size_t size = 0;
     for (int i = 0; i < 15; ++i) {
@@ -207,149 +238,231 @@ class Run {
     return size;
   }
 
-  // The entire fizz-buzz output for this run takes this many lines.
-  static constexpr int64_t RunLines() {
+  // Returns the number of lines in this run.
+  static constexpr int64_t LinesInRun() {
     return PowTen(DIGITS) - PowTen(DIGITS - 1);
   }
 
   // The entire fizz-buzz output for this run takes this many bytes.
   static constexpr size_t RunBytes() {
-    if constexpr(DIGITS == 1)
-    {
+    if constexpr(DIGITS == 1) {
       return 5 + 3 * kFizzLength + 1 * kBuzzLength + 9 * kNewlineLength;
     } else {
-      return RunLines() / 15 * FifteenerBytes();
+      return LinesInRun() / 15 * FifteenerBytes();
     }
   }
 
-  // One half-batch needs this many bytes. If the run does not fill a full
-  // half-batch, returns the run size.
-  static constexpr size_t HalfBatchBytes() {
-    if constexpr (LinesInHalfBatch() < kMaxLinesInHalfBatch) {
-      return RunBytes();
+  // Returns the number of batches in this run.
+  static constexpr int64_t BatchesInRun() {
+    if constexpr (DIGITS > kSuffixDigits) {
+      return PowTen(DIGITS - kSuffixDigits - 1) * 9;
     } else {
-       static_assert(LinesInHalfBatch() % 15 == 0);
-       return LinesInHalfBatch() / 15 * FifteenerBytes();
+      return 1;
     }
-  }
-
-  static constexpr int64_t LinesInHalfBatch() {
-    return std::min(kMaxLinesInHalfBatch, RunLines());
-  }
-
-  static constexpr int64_t HalfBatchesInRun() {
-    return RunLines() / LinesInHalfBatch();
-  }
-
-  // Fills |out| with the nth half-batch (0-indexed). This is a relatively
-  // slow operation so we do this only at the beginning of each run.
-  static char* InitHalfBatch(char* out, int64_t n) {
-    int64_t start = PowTen(DIGITS - 1) + n * LinesInHalfBatch();
-    int64_t end = std::min(PowTen(DIGITS), start + LinesInHalfBatch());
-    for (int64_t line = start; line < end; ++line) {
-      out = InsertFizzBuzzLine(out, line);
-    }
-    return out;
   }
 
  public:
-  // Executes this run by using the given |output_handler|.
-  // The code outputs all lines for this run, using the double-buffering
-  // mechanism of |output_handler|.
+  // Outputs all lines for this run by using the buffers from |output_handler|.
   static void Execute(OutputHandler& output_handler) {
-    InitHalfBatch(output_handler.GetUpdateBuffer(), 0);
-    output_handler.Output(HalfBatchBytes());
-    if constexpr (HalfBatchBytes() < RunBytes()) {
-      static_assert(RunBytes() % HalfBatchBytes() == 0);
-      InitHalfBatch(output_handler.GetUpdateBuffer(), 1);
-      output_handler.Output(HalfBatchBytes());
+    Batch<0> batch0(&output_handler);
+    Batch<1> batch1(&output_handler);
+    Batch<2> batch2(&output_handler);
+    // We fill up each batch with the initial values. This is a relatively slow
+    // process so we only do it once per run. In subsequent iterations, we
+    // only increment the numbers (see below) which is much faster.
+    batch0.Init();
+    batch0.Output();
+    if constexpr (BatchesInRun() > 1) {
+      batch1.Init();
+      batch1.Output();
+    }
+    if constexpr (BatchesInRun() > 2) {
+      batch2.Init();
+      batch2.Output();
+    }
 
+    if constexpr (BatchesInRun() > 3) {
       int64_t prefix = PowTen(DIGITS - kSuffixDigits - 1);
-
-      for (int64_t half_batch = 2; half_batch < HalfBatchesInRun();
-           ++half_batch) {
-
-        // This part of the code assumes that kChunksInHalfBatch == 3, if this
-        // changes, this part needs to be rewritten.
-        static_assert(kChunksInHalfBatch == 3);
-
-        // We update the 3 chunks of the half batch in 3 threads. For this to
-        // be efficient, each chunk has to be "big enough", otherwise the
-        // threading overhead outweighs the performance gains we get from
-        // parallelism.
-        #pragma omp parallel num_threads(3)
-        {
-          switch (omp_get_thread_num()) {
-            case 0:
-              Chunk<0>(output_handler.GetUpdateBuffer(), prefix)
-                .IncrementNumbers();
-              break;
-            case 1:
-              Chunk<1>(output_handler.GetUpdateBuffer(), prefix + 1)
-                .IncrementNumbers();
-              break;
-            case 2:
-              Chunk<2>(output_handler.GetUpdateBuffer(), prefix + 2)
-                .IncrementNumbers();
-              break;
-          }
+      // We update the batch from |kParallelism| threads
+      // We use a spinning barrier for synchronizing between the threads.
+      // After all threads reach the barrier, the completion function is
+      // executed and the output is written out. Then the next batch is
+      // processed.
+      SpinningBarrier barrier(kParallelism, [&] {
+        switch (prefix % 3) {
+          // In the beginning
+          //   batch0 corresponds to prefix 10..00 ( ≡ 1 mod 3),
+          //   batch1 corresponds to prefix 10..01 ( ≡ 2 mod 3),
+          //   batch2 corresponds to prefix 10..02 ( ≡ 0 mod 3).
+          // After all 3 batches are processed, the prefix is incremented by 3,
+          // hence the mods don't change.
+          case 0: batch2.Output(); break;
+          case 1: batch0.Output(); break;
+          case 2: batch1.Output(); break;
         }
+        prefix++;
+      });
 
-        output_handler.Output(HalfBatchBytes());
-        prefix += kChunksInHalfBatch;
-      }
+      [&]<size_t... THREAD_ID>(std::index_sequence<THREAD_ID...>) {
+        // Launch |kParallelism| number of threads. We could also use a thread
+        // pool, but one run takes long enough that launching new threads is
+        // negligible.
+        (std::jthread([&] {
+          for (int64_t batch = 3; batch < BatchesInRun();
+               batch += 3) {
+            // Each thread processes their corresponding chunk in the batch.
+            Chunk<0, THREAD_ID>(batch0).IncrementNumbers(prefix);
+            // At this point, all threads wait until every other thread reaches
+            // the barrier, the last thread to finish will invoke batch.Output()
+            // (see above at the definition of |barrier|).
+            barrier.Wait();
+            Chunk<1, THREAD_ID>(batch1).IncrementNumbers(prefix);
+            barrier.Wait();
+            Chunk<2, THREAD_ID>(batch2).IncrementNumbers(prefix);
+            barrier.Wait();
+          }
+        }) , ...);
+      }(std::make_index_sequence<kParallelism>());
     }
   }
 
-  // Represents a chunk within this run with chunk id |CHUNK_ID|.
-  // |CHUNK_ID| ∈ [0, kChunksInHalfBatch)
-  // Since numbers in each chunk need to be incremented at different indexes,
-  // we specialize this class so the indexes can be precomputed at compile time.
-  // Each chunk represents a section of the output belonging to line numbers
-  // 10^kSuffixDigits
-  template<int CHUNK_ID>
-  class Chunk {
-    static_assert(CHUNK_ID < kChunksInHalfBatch);
+  // A batch represents 10^|kSuffixDigits| lines of the output.
+  // This is useful because the last |kSuffixDigits| digits don't need to be
+  // updated. Furthermore, line numbers in one batch share the same prefix.
+  // BATCH_ID ∈ [0, 1, 2]
+  template<int BATCH_ID>
+  class Batch {
+    static_assert(BATCH_ID < 3);
+    using PreviousBatch = Batch<BATCH_ID - 1>;
 
     public:
-    // Initializes a chunk that resides in the half-batch pointed to by
-    // and has prefix |prefix|.
-    Chunk(char* half_batch, int64_t prefix) : half_batch_(half_batch),
-                                              prefix_(prefix) {}
-
-    // Returns the index of the beginning of this chunk within a half-batch.
-    static constexpr int64_t FirstLineNumberMod15() {
-      return (PowTen(DIGITS - 1) + CHUNK_ID * kLinesInChunk) % 15;
+    Batch(OutputHandler* output_handler) : output_handler_(output_handler) {
+      static_assert(OutputHandler::BufferSize() >= BytesInBatch());
     }
 
-    // Length of this chunk in bytes.
-    static constexpr int64_t ChunkBytes() {
-      size_t size = kLinesInChunk / 15 * FifteenerBytes();
-      for (int64_t i = FirstLineNumberMod15() + kLinesInChunk / 15 * 15;
-           i < FirstLineNumberMod15() + kLinesInChunk; ++i) {
+    // Initializes this batch by taking the next available buffer from
+    // the output handler and filling it with the initial values.
+    void Init() {
+      buffer_id_ = output_handler_->NextBufferId();
+      char* out = GetBuffer();
+      int64_t start = PowTen(DIGITS - 1) + BATCH_ID * LinesInBatch();
+      int64_t end = std::min(PowTen(DIGITS), start + LinesInBatch());
+      for (int64_t line = start; line < end; ++line) {
+        out = InsertFizzBuzzLine(out, line);
+      }
+    }
+
+    // Returns the first line number of this chunk mod 15.
+    static constexpr int64_t FirstLineNumberMod15() {
+      if constexpr (BATCH_ID == 0) {
+        return DIGITS > 1 ? 10 : 1;
+      } else {
+        return (PreviousBatch::FirstLineNumberMod15() +
+          PreviousBatch::LinesInBatch()) % 15;
+      }
+    }
+
+    // Returns the number of lines in this batch.
+    static constexpr int64_t LinesInBatch() {
+      return std::min(kMaxLinesInBatch, LinesInRun());
+    }
+
+    // Returns the size of this batch in bytes.
+    static constexpr int64_t BytesInBatch() {
+      if constexpr (LinesInBatch() < kMaxLinesInBatch) {
+        return RunBytes();
+      } else {
+        size_t size = LinesInBatch() / 15 * FifteenerBytes();
+        for (int64_t i = FirstLineNumberMod15() + LinesInBatch() / 15 * 15;
+             i < FirstLineNumberMod15() + LinesInBatch(); ++i) {
+          size += FizzBuzzLineLength(i);
+        }
+        return size;
+      }
+    }
+
+    void Output() {
+      output_handler_->Output(buffer_id_, BytesInBatch());
+    }
+
+    char* GetBuffer() {
+      return output_handler_->GetBuffer(buffer_id_);
+    }
+
+    OutputHandler* output_handler_;
+    // The buffer id that this batch should use in |output_handler_|.
+    int buffer_id_;
+  };
+
+  // Represents a chunk, a part of batch processed by thread with id
+  // |THREAD_ID|. THREAD_ID ∈ [0, kParallelism)
+  // Since numbers in each chunk need to be incremented at different indexes,
+  // we specialize this class for each BATCH_ID and THREAD_ID so the indexes can
+  // be precomputed at compile time.
+  template<int BATCH_ID, int THREAD_ID>
+  class Chunk {
+    using PreviousChunk = Chunk<BATCH_ID, THREAD_ID - 1>;
+
+    public:
+    // Initializes a chunk that resides in |batch|.
+    Chunk(Batch<BATCH_ID> batch) : batch_(batch) {}
+
+    // Returns the first line number of this chunk mod 15.
+    static constexpr int64_t FirstLineNumberMod15() {
+      if constexpr (THREAD_ID == 0) {
+        return Batch<BATCH_ID>::FirstLineNumberMod15();
+      } else {
+        return (PreviousChunk::FirstLineNumberMod15() +
+          PreviousChunk::LinesInChunk()) % 15;
+      }
+    }
+
+    // Returns the index of the start byte of this chunk in the batch.
+    static constexpr int64_t StartIndexInBatch() {
+      if constexpr (THREAD_ID == 0) {
+        return 0;
+      } else {
+        return PreviousChunk::StartIndexInBatch() +
+          PreviousChunk::BytesInChunk();
+      }
+    }
+
+    // Returns the number of lines in this chunk.
+    static constexpr int64_t LinesInChunk() {
+      int64_t done = THREAD_ID == 0 ? 0 :
+        PreviousChunk::CumulativeLinesUpToChunk();
+      int64_t remaining_lines = Batch<BATCH_ID>::LinesInBatch() - done;
+      int64_t remaining_threads = kParallelism - THREAD_ID;
+      // equivalent to ceil(remaining_lines / remaining_threads)
+      return (remaining_lines - 1) / remaining_threads + 1;
+    }
+
+    // Returns the number of lines in this and all previous chunks in the batch.
+    static constexpr int64_t CumulativeLinesUpToChunk() {
+      if constexpr (THREAD_ID < 0) {
+        return 0;
+      } else {
+        return PreviousChunk::CumulativeLinesUpToChunk() + LinesInChunk();
+      }
+    }
+
+    // Returns the length of this chunk in bytes.
+    static constexpr int64_t BytesInChunk() {
+      size_t size = LinesInChunk() / 15 * FifteenerBytes();
+      for (int64_t i = FirstLineNumberMod15() + LinesInChunk() / 15 * 15;
+           i < FirstLineNumberMod15() + LinesInChunk(); ++i) {
         size += FizzBuzzLineLength(i);
       }
       return size;
     }
 
-    // Returns the index of the beginning of this chunk within a half-batch.
-    static constexpr int64_t StartIndexInHalfBatch() {
-      if constexpr (CHUNK_ID == 0) {
-        return 0;
-      } else {
-        return Chunk<CHUNK_ID - 1>::StartIndexInHalfBatch() +
-               Chunk<CHUNK_ID - 1>::ChunkBytes();
-      }
-    }
-
     // Increments all the numbers in the chunk.
-    // |half_batch| must be aligned to 8 bytes.
     // This function wraps IncrementNumbersImpl for efficiently dispatching to
     // specialized versions based on |prefix|.
-    void IncrementNumbers() {
+    void IncrementNumbers(int64_t prefix) {
       // If DIGITS < kSuffixDigits, it means that all the numbers within a run
-      // will fit into a single half-batch, so we should not use
-      // IncrementNumbers(). The below implementation would not even work.
+      // will fit into a single batch, so we should not use IncrementNumbers().
+      // The below implementation would not even work.
       static_assert(DIGITS >= kSuffixDigits);
       constexpr int64_t max_overflow_digits = DIGITS - kSuffixDigits;
       // Contains an IncrementChunkImpl() specialization for each value in
@@ -362,30 +475,29 @@ class Run {
         return res;
       }();
 
-      increment_chunk_impls[OverflowDigits(prefix_)](half_batch_);
+      increment_chunk_impls[OverflowDigits(prefix)](batch_.GetBuffer());
     }
 
     private:
-    // Increments this chunk in the half-batch starting at |half_batch|.
-    // |half_batch| must be aligned to 8 bytes.
+    // Increments this chunk in |batch|.
     //
     // Each number line is incremented by |kIncrementBy| * 10^kSuffixDigits.
-    // If OVERFLOW_DIGITS > 0, we assume that the increment will be > 9,
+    // If OVERFLOW_DIGITS > 0, we assume that the operation will overflow,
     // therefore, we need to increment this many digits beforehand. It's the
     // caller's responsibility to calculate the number of digits that will need
     // to be updated in this chunk.
 
-    // For example, the chunk if kIncrementBy = 6 and kSuffixDigits = 5, the
-    // chunk [10000000, 10099999] can be incremented to [10600000; 10699999]
+    // For example, the chunk if kIncrementBy = 3 and kSuffixDigits = 6, the
+    // chunk [100000000, 100999999] can be incremented to [103000000; 103999999]
     // with OVERFLOW_DIGITS = 0 (no overflow).
-    // When incrementing [10800000, 10899999] to [11400000; 11499999],
+    // When incrementing [108000000, 108999999] to [111000000; 111999999],
     // OVERFLOW_DIGITS = 1 (one-digit overflow).
-    // When incrementing [19800000, 19899999] to [20400000, 20499999],
+    // When incrementing [198000000, 198999999] to [201000000, 201999999],
     // OVERFLOW_DIGITS = 2 (two-digit overflow)
     template<int OVERFLOW_DIGITS>
-    static void IncrementNumbersImpl(char* half_batch) {
-      char* out = half_batch;
-      constexpr int64_t start_index = StartIndexInHalfBatch();
+    static void IncrementNumbersImpl(char* batch) {
+      char* out = batch;
+      constexpr int64_t start_index = StartIndexInBatch();
       constexpr int first_line_number_mod_15 = FirstLineNumberMod15();
 
       // Increments the |num_lines| starting from |out|.
@@ -411,11 +523,16 @@ class Run {
         out += FifteenerBytes() * num_lines / 15;
       };
 
-      #pragma GCC unroll 1
-      for (int64_t i = 0; i < kLinesInChunk / 120; ++i) {
+      for (int64_t i = 0; i < LinesInChunk() / 120; ++i) {
         increment(120);
       }
-      increment(kLinesInChunk % 120);
+      increment(LinesInChunk() % 120);
+    }
+
+    // Returns whether this number is printed as-is ie. it's not a multiply of 3
+    // or 5.
+    static constexpr bool IsFizzBuzzNumber(int64_t number) {
+      return number % 3 != 0 && number % 5 != 0;
     }
 
     // Increments the number starting at base[line_start].
@@ -441,20 +558,28 @@ class Run {
       }
     }
 
-    // Increments the byte at |index| in |chunk_start| by |by|.
+    // Increments the byte at |index| in |base| by |by|.
     // |base| must by aligned to 8 bytes.
     // For maximum performance, |index| and |by| should be deducible by the
     // compiler to constants.
     __attribute__((always_inline))
     static inline void IncrementAt(char* base, int64_t index, char by) {
+      union char_array_int64 {
+        char ch[8];
+        int64_t int64;
+      };
+      auto base_as_union = reinterpret_cast<char_array_int64*>(base);
       // The code below only works on little endian systems.
       static_assert(std::endian::native == std::endian::little);
-      *(((int64_t * )(base)) + (index / 8)) += ((int64_t) by) << ((index % 8) * 8);
+      // Increment the character at index |index| by |by|. This works because
+      // we can guarantee that the character won't overflow.
+      base_as_union[index / 8].int64 +=
+        static_cast<int64_t>(by) << ((index % 8) * 8);
     }
 
     // Returns the number of digits that will overflow when incrementing
-    // |prefix_| by |kIncrementBy|.
-    // Eg. if kIncrementBy = 6:
+    // |prefix| by |kIncrementBy|.
+    // Eg. if kIncrementBy = 3:
     // OverflowDigits(100) = 0 (no digits overflow)
     // OverflowDigits(108) = 1 (8 overflows and 0 is incremented by 1)
     // OverflowDigits(198) = 2 (8 overflows and 9 overflows)
@@ -471,8 +596,7 @@ class Run {
       return 20;
     }
 
-    char* half_batch_;
-    int64_t prefix_;
+    Batch<BATCH_ID> batch_;
   };
 };
 
