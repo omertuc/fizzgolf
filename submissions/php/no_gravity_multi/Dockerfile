@@ -1,16 +1,11 @@
-FROM php:8.1-zts-buster
+FROM php:8.1-cli
 
 RUN apt-get update
 
-RUN apt-get install -y \
-		zlib1g-dev \
-		libpng-dev \
-		libfreetype6-dev \
-		libjpeg62-turbo-dev
+RUN apt-get install -y pv
 
-RUN	docker-php-ext-configure gd --with-freetype --with-jpeg
-
-RUN	docker-php-ext-install -j$(nproc) sysvsem
-RUN	docker-php-ext-install -j$(nproc) sysvshm
-RUN	docker-php-ext-install -j$(nproc) sysvmsg
-RUN	docker-php-ext-install -j$(nproc) pcntl
+RUN	docker-php-ext-install -j$(nproc) sysvsem sysvshm sysvshm pcntl opcache
+#RUN	docker-php-ext-install -j$(nproc) sysvsem
+#RUN	docker-php-ext-install -j$(nproc) sysvshm
+#RUN	docker-php-ext-install -j$(nproc) pcntl
+#RUN	docker-php-ext-install -j$(nproc) opcache
